@@ -16,7 +16,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Create ZIP archive)
+      - name: Create ZIP archive
         run: |
           zip -r SM-${{ env.DEVICE }}_DFE_v${{ env.VERSION }}.zip . -x "README.md" "LICENSE" ".git/*" ".github/*"
 
@@ -26,13 +26,14 @@ jobs:
           tag_name: "v${{ env.VERSION }}"
           name: "DFE v${{ env.VERSION }} for SM-${{ env.DEVICE }}"
           body: |
-              Device: SM-${{ env.DEVICE }}
-              Version: ${{ env.VERSION }}
-              OS: ${{ env.ONEUI }}
+            Device: SM-${{ env.DEVICE }}
+            Version: ${{ env.VERSION }}
+            OS: ${{ env.ONEUI }}
 
-              Based on recovery zip flash method
+            Based on recovery zip flash method.
 
-             ️ Be sure to format /data after flashing this! If there is an error on 'Unmounting /data..' try to reboot to recovery and retry again
+            Be sure to format /data after flashing this!
+            If you encounter "Unmounting /data..." errors, reboot to recovery and try again.
           files: SM-${{ env.DEVICE }}_DFE_v${{ env.VERSION }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
