@@ -3,6 +3,9 @@ name: Zip and Release SM-A556E_DFE
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   release:
     runs-on: ubuntu-latest
