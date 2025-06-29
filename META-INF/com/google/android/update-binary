@@ -1,0 +1,361 @@
+#!/sbin/sh
+#
+# update-binary (recovery sh)
+
+API=$1
+OUTFD=$2
+ZIPFILE=$3
+
+ui_print() {
+  if [ -e "/proc/self/fd/$OUTFD" ]; then
+    echo "ui_print $1" > /proc/self/fd/$OUTFD
+    echo "ui_print"   > /proc/self/fd/$OUTFD
+  else
+    echo "$1"
+  fi
+}
+
+TMPDIR=/data/local/tmp/dfework
+TOOLS=$TMPDIR/tools
+BASH=$TOOLS/bash
+BUSYBOX=$TOOLS/busybox
+WORKDIR=/data/local/tmp
+LPUNPACK_DIR=$WORKDIR/lpunpack
+UNPACK_DIR=$WORKDIR/unpack
+TMP=/tmp
+
+# Not something important
+for i in $(seq 1 28); do ui_print " "; done
+ui_print "____________________________________________________"
+ui_print " "
+ui_print "Disable File Encryption for Metadata / FBE v2"
+ui_print "Version 1.5"
+ui_print "by Lyinceer XDA ||  @zwran on Telegram"
+sleep 2
+ui_print " "
+ui_print "If you encounter bugs or issues, report them!"
+ui_print " "
+ui_print "____________________________________________________"
+ui_print " "
+sleep 3
+
+# Check if internal storage is accessible
+if [ ! -d "/data/media" ]; then
+  ui_print "[*] Storage is encrypted or missing!"
+  sleep 1
+  ui_print "[*] Internal storage currently appears as 0MB."
+  sleep 3
+  ui_print "[*] Need at least free space of ~14GB."
+  sleep 5
+  ui_print "[*] Do you want to FORMAT /data and decrypt?"
+  sleep 3
+  ui_print "[*] Use Volume UP to change selection, Volume DOWN to select."
+  ui_print "[*] Your choice:"
+
+  # Default selection
+  SELECTION="yes"
+
+  # Function to display current selection
+  print_selection() {
+    ui_print "    ------------------------------"
+    if [ "$SELECTION" = "yes" ]; then
+      ui_print "    [*] Yes"
+      ui_print "    [ ] No"
+    else
+      ui_print "    [ ] Yes"
+      ui_print "    [*] No"
+    fi
+  }
+
+  # Function to detect volume key press
+  detect_key() {
+    SECONDS=0
+    TIMEOUT=15
+    while [ $SECONDS -lt $TIMEOUT ]; do
+      EVENT_LINE=$(getevent -lc 1 2>/dev/null)
+      case "$EVENT_LINE" in
+        *KEY_VOLUMEUP*)
+          echo "UP"
+          return
+          ;;
+        *KEY_VOLUMEDOWN*)
+          echo "DOWN"
+          return
+          ;;
+      esac
+    done
+    echo "TIMEOUT"
+  }
+
+  # Show default selection
+  print_selection
+
+  # Selection loop
+  while true; do
+    KEY=$(detect_key)
+    case "$KEY" in
+      UP)
+        if [ "$SELECTION" = "yes" ]; then
+          SELECTION="no"
+        else
+          SELECTION="yes"
+        fi
+        print_selection
+        ;;
+      DOWN)
+        break
+        ;;
+      TIMEOUT)
+        ui_print "[!] No selection made. Exiting..."
+        exit 1
+        ;;
+    esac
+  done
+
+  # Final action based on selection
+  if [ "$SELECTION" = "yes" ]; then
+    ui_print "[*] Continuing with data format to fix Internal Storage temporarily..."
+    umount /data 2>/dev/null
+	sleep 5
+    make_f2fs -f /dev/block/by-name/userdata
+	sleep 5
+    mount /data || {
+      ui_print "[-] Failed to mount /data! Please format via Wipe > Format Data and Reboot back to Recovery!"
+      exit 1
+    }
+    ui_print "[*] /data has been formatted as F2FS."
+  else
+    ui_print "[!] User chose not to decrypt. Exiting..."
+    exit 1
+  fi
+fi
+
+# Clean & extract tools
+rm -rf "$TMPDIR"
+mkdir -p "$TOOLS" "$LPUNPACK_DIR" "$UNPACK_DIR"
+unzip -oq "$ZIPFILE" 'tools/*' -d "$TMPDIR"
+chmod -R 0755 "$TOOLS"
+
+# Check required binaries
+for t in bash busybox lpunpack extract.erofs64 mkfs.erofs lpdump lpmake \
+           detect_slot.sh gen_lpmake_args.sh; do
+  [ -x "$TOOLS/$t" ] || { ui_print "[-] Missing tool: $t"; exit 1; }
+done
+
+# Device check
+BOARD_NAME=$(getprop ro.product.board)
+if [ "$BOARD_NAME" != "s5e8845" ]; then
+  ui_print "[-] This zip is only for s5e8845 devices."
+  ui_print "[-] Your device soc: $BOARD_NAME"
+  exit 1
+fi
+
+sleep 8
+
+# Detect active slot
+ui_print "[+] Detecting active slot..."
+SLOT=$("$TOOLS/detect_slot.sh") || {
+  ui_print "[-] Failed to detect active slot"
+  exit 1
+}
+
+sleep 2
+
+SLOT_UPPER=$(echo "$SLOT" | tr 'a-z' 'A-Z')
+ui_print "    Active slot: $SLOT_UPPER"
+
+VENDOR_BLK="/dev/block/mapper/vendor_$SLOT"
+SUPER_BLK="/dev/block/by-name/super"
+[ -b "$VENDOR_BLK" ] || { ui_print "[-] Missing $VENDOR_BLK"; exit 1; }
+[ -b "$SUPER_BLK" ] || { ui_print "[-] Missing $SUPER_BLK"; exit 1; }
+
+# Copy & unpack super
+ui_print "[+] Preparing setup..."
+
+if [ -b "$SUPER_BLK" ]; then
+  if dd if="$SUPER_BLK" of="$WORKDIR/super.img" bs=1M status=none; then
+    ui_print "[+] super.img copied successfully."
+  else
+    ui_print "[-] Failed to copy from $SUPER_BLK with dd."
+    exit 1
+  fi
+else
+  ui_print "[-] $SUPER_BLK is not a block device!"
+  exit 1
+fi
+
+ui_print "[+] Unpacking..."
+"$TOOLS/lpunpack" "$WORKDIR/super.img" "$LPUNPACK_DIR" >/dev/null 2>&1 \
+  || { ui_print "[-] lpunpack failed"; exit 1; }
+
+ui_print "    done..."
+sleep 4
+rm -f "$WORKDIR/super.img"
+
+# Rename vendor_a to vendor to avoid fs_config errors!
+cp "$LPUNPACK_DIR/vendor_${SLOT}.img" "$LPUNPACK_DIR/vendor.img"
+
+# Extract vendor
+VENDOR_IMG="$LPUNPACK_DIR/vendor.img"
+[ -f "$VENDOR_IMG" ] || { ui_print "[-] $VENDOR_IMG not found"; exit 1; }
+ui_print "    vendor is EROFS. Pfftt..."
+ui_print "  "
+sleep 3
+ui_print "[+] Preparing EROFS tools for vendor"
+sleep 4
+ui_print "[+] Extracting vendor..."
+rm -rf "$UNPACK_DIR" && mkdir -p "$UNPACK_DIR"
+"$TOOLS/extract.erofs64" -i "$VENDOR_IMG" -x -f -o "$UNPACK_DIR" >/dev/null 2>&1 \
+  || { ui_print "[-] extract.erofs64 failed"; exit 1; }
+
+sleep 2
+
+# Patch fstab
+# Try to locate fstab under correct vendor slot
+FSTAB=$(find "$UNPACK_DIR/vendor/" -type f -name "fstab.s5e8845" | head -n1)
+# Check if found
+[ -f "$FSTAB" ] || { ui_print "[-] fstab not found in vendor_$SLOT"; exit 1; }
+
+ui_print "[+] Found fstab: /vendor/etc/fstab.s5e8845"
+ui_print "[+] Patching fstab..."
+
+$BUSYBOX sed -i \
+  -e 's#^/dev/block/by-name/metadata.*#/dev/block/by-name/metadata\t/metadata\tf2fs\tnoatime,nosuid,nodev,discard,sync,fsync_mode=strict,data_flush\twait,formattable,first_stage_mount,check#' \
+  -e 's#^/dev/block/by-name/userdata.*#/dev/block/by-name/userdata\t/data\tf2fs\tnoatime,nosuid,nodev,discard,usrquota,grpquota,fsync_mode=nobarrier,reserve_root=32768,resgid=5678\tlatemount,wait,check,quota,checkpoint=fs,reservedsize=128M,fscompress#' \
+  "$FSTAB"
+
+ui_print "[+] fstab patched successfully."
+
+sleep 2
+
+# Repack vendor
+ui_print "[+] Repacking vendor..."
+ui_print "  "
+FS_OPTIONS_FILE=$(find "$UNPACK_DIR/config" -name "vendor_fs_options" | head -n1)
+[ -f "$FS_OPTIONS_FILE" ] || { ui_print "[-] vendor_fs_options not found"; exit 1; }
+
+# Extract UUID (-U) and timestamp (-T)
+UUID=$(awk '/^mkfs.erofs options:/ { for(i=1;i<=NF;i++) if ($i=="-U") print $(i+1) }' "$FS_OPTIONS_FILE")
+TIMESTAMP=$(awk '/^mkfs.erofs options:/ { for(i=1;i<=NF;i++) if ($i=="-T") print $(i+1) }' "$FS_OPTIONS_FILE")
+  
+
+FS_CONFIG="$UNPACK_DIR/config/vendor_fs_config"
+FILE_CONTEXTS="$UNPACK_DIR/config/vendor_file_contexts"
+[ -f "$FS_CONFIG" ] || { ui_print "[-] vendor_fs_config not found"; exit 1; }
+[ -f "$FILE_CONTEXTS" ] || { ui_print "[-] vendor_file_contexts not found"; exit 1; }
+
+# Run mkfs.erofs using extracted UUID and timestamp
+"$TOOLS/mkfs.erofs" \
+  --mount-point=vendor \
+  -z lz4 \
+  -U "$UUID" \
+  -T "$TIMESTAMP" \
+  --file-contexts="$FILE_CONTEXTS" \
+  --fs-config-file="$FS_CONFIG" \
+  "$WORKDIR/vendor_mod.img" \
+  "$UNPACK_DIR/vendor" >/dev/null 2>&1 \
+  || { ui_print "[-] mkfs.erofs failed"; exit 1; }
+
+rm "$LPUNPACK_DIR/vendor.img"
+cp -f "$WORKDIR/vendor_mod.img" "$LPUNPACK_DIR/vendor_${SLOT}.img" || {
+  ui_print "[-] Failed to copy patched vendor_${SLOT}.img"
+  exit 1
+}
+
+ui_print "[DEBUG] Verifying patched vendor.img…"
+$TOOLS/extract.erofs64 -i "$LPUNPACK_DIR/vendor_${SLOT}.img" -x -o /data/local/tmp/verify_vendor
+
+FSTAB_LOC=$(find /data/local/tmp/verify_vendor -type f -name "fstab.s5e8845" | head -n1)
+if [ -f "$FSTAB_LOC" ]; then
+  if grep -q "inlinecrypt" "$FSTAB_LOC"; then
+    ui_print "[DEBUG] ERROR: Patched fstab MISSING expected patch"
+  else
+    ui_print "[DEBUG] Patched fstab present in $(basename "$FSTAB_LOC")"
+  fi
+else
+  ui_print "[DEBUG] ERROR: fstab.s5e8845 not found after unpacking vendor_${SLOT}.img"
+fi
+
+ui_print "  "
+
+# Metadata slots
+METADATA_SLOTS=$("$TOOLS/lpdump" "$SUPER_BLK" | awk '/Metadata slot count/ {print $NF}')
+[ -z "$METADATA_SLOTS" ] && METADATA_SLOTS=2
+
+# Calculate partition layout
+ui_print "[+] Calculating partition layout..."
+/data/local/tmp/dfework/tools/gen_lpmake_args.sh /data/local/tmp/lpunpack /dev/block/by-name/super > /tmp/lpmargs.txt
+LPMARGS=$(cat /tmp/lpmargs.txt)
+
+ui_print "[*] Dumping LPMARGS..."
+echo "$LPMARGS" > /tmp/final_lpmargs_debug.txt
+
+echo "$LPMARGS" | grep -q -- '--partition' || { ui_print "[-] Layout failed"; exit 1; }
+
+# Repack super
+ui_print "[+] Repacking things..."
+SUPER_SIZE=$("$TOOLS/busybox" blockdev --getsize64 "$SUPER_BLK")
+#SUPER_SIZE=$(awk -v size="$SUPER_SIZE" 'BEGIN { print int(size / 4096) * 4096 }')
+
+ls -l "$LPUNPACK_DIR/vendor_${SLOT}.img"
+
+# Calls LPMAKE
+ui_print "[*] Running lpmake..."
+$TOOLS/lpmake \
+  --metadata-size 65536 \
+  --metadata-slots "$METADATA_SLOTS" \
+  --super-name super \
+  --device super:$SUPER_SIZE \
+  $LPMARGS \
+  --output "$WORKDIR/super_repacked.img" 2>&1 | tee /tmp/lpmake_debug.log
+
+if [ $? -ne 0 ]; then
+  ui_print "[-] lpmake failed!"
+  ui_print "[DEBUG] Contents of /tmp/lpmake_debug.log:"
+  cat /tmp/lpmake_debug.log | while read line; do ui_print "  $line"; done
+  exit 1
+fi
+
+sleep 2
+
+# Flash super
+ui_print "[+] Flashing back things..."
+dd if="$WORKDIR/super_repacked.img" of="$SUPER_BLK" bs=1M || {
+  ui_print "[-] Flash failed"; exit 1;
+}
+sync
+
+sleep 2
+ui_print "  "
+
+# Debug: Verify patched vendor in live super
+ui_print "[DEBUG] Verifying if live super contains patched vendor..."
+rm -rf "$WORKDIR/postflash_live"
+mkdir -p "$WORKDIR/postflash_live"
+"$TOOLS/lpunpack" "$SUPER_BLK" /data/local/tmp/postflash_live
+"$TOOLS/extract.erofs64" -i /data/local/tmp/postflash_live/vendor_${SLOT}.img -x -o /data/local/tmp/postflash_live/vendor
+
+ui_print "  "
+
+FSTAB_PATH="/data/local/tmp/postflash_live/vendor/vendor_${SLOT}/etc/fstab.s5e8845"
+if [ -f "$FSTAB_PATH" ]; then
+  if grep -q "inlinecrypt" "$FSTAB_PATH"; then
+    ui_print "[-] [FAIL] Live fstab still has encryption flags!"
+  else
+    ui_print "[*] [PASS] Live fstab patch is present."
+  fi
+else
+  ui_print "[-] fstab.s5e8845 not found in live vendor!"
+fi
+
+# Cleanup files
+rm -rf "$WORKDIR"
+rm -rf "$TMP"
+
+# Create media back
+mkdir -p /data/media
+
+ui_print "[!] Decryption patch applied successfully!"
+sleep 3
+ui_print "[!] Please FORMAT /data before rebooting."
+exit 0
