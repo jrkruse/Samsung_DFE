@@ -3,10 +3,10 @@
 This is a custom recovery-flashable script designed to disable file-based encryption (FBE v2) on Samsung device with the s5e8845 SoC. This fix "0 MB internal storage" issues, and decrypts /data.
 
 ## Use with caution.
-## Supported Device
-- Samsung Galaxy A55 5G (SM-A556E)
 ! Haven't test on other models like SM-A556B and etc.
 ! Haven't test on slot _b , but it'll probably work.
+## Supported Device
+- Samsung Galaxy A55 5G (SM-A556E)
 
 ## Installation
 1. Boot into custom recovery
