@@ -29,8 +29,8 @@ for i in $(seq 1 28); do ui_print " "; done
 ui_print "____________________________________________________"
 ui_print " "
 ui_print "Disable File Encryption for Metadata / FBE v2"
-ui_print "Version 1.5"
-ui_print "by Lyinceer XDA ||  @zwran on Telegram"
+ui_print "Version 1.5 Qualcomn"
+ui_print "by Lyinceer XDA ||  modded by jrkruse "
 sleep 2
 ui_print " "
 ui_print "If you encounter bugs or issues, report them!"
@@ -45,7 +45,7 @@ if [ ! -d "/data/media" ]; then
   sleep 1
   ui_print "[*] Internal storage currently appears as 0MB."
   sleep 3
-  ui_print "[*] Need at least free space of ~14GB."
+  ui_print "[*] Need at least free space of ~40GB."
   sleep 5
   ui_print "[*] Do you want to FORMAT /data and decrypt?"
   sleep 3
@@ -144,13 +144,6 @@ done
 
 # Device check
 BOARD_NAME=$(getprop ro.product.board)
-if [ "$BOARD_NAME" != "s5e8845" ]; then
-  ui_print "[-] This zip is only for s5e8845 devices."
-  ui_print "[-] Your device soc: $BOARD_NAME"
-  exit 1
-fi
-
-sleep 8
 
 # Detect active slot
 ui_print "[+] Detecting active slot..."
@@ -164,7 +157,7 @@ sleep 2
 SLOT_UPPER=$(echo "$SLOT" | tr 'a-z' 'A-Z')
 ui_print "    Active slot: $SLOT_UPPER"
 
-VENDOR_BLK="/dev/block/mapper/vendor_$SLOT"
+VENDOR_BLK="/dev/block/mapper/vendor$SLOT"
 SUPER_BLK="/dev/block/by-name/super"
 [ -b "$VENDOR_BLK" ] || { ui_print "[-] Missing $VENDOR_BLK"; exit 1; }
 [ -b "$SUPER_BLK" ] || { ui_print "[-] Missing $SUPER_BLK"; exit 1; }
@@ -193,7 +186,7 @@ sleep 4
 rm -f "$WORKDIR/super.img"
 
 # Rename vendor_a to vendor to avoid fs_config errors!
-cp "$LPUNPACK_DIR/vendor_${SLOT}.img" "$LPUNPACK_DIR/vendor.img"
+cp "$LPUNPACK_DIR/vendor${SLOT}.img" "$LPUNPACK_DIR/vendor.img"
 
 # Extract vendor
 VENDOR_IMG="$LPUNPACK_DIR/vendor.img"
@@ -212,19 +205,53 @@ sleep 2
 
 # Patch fstab
 # Try to locate fstab under correct vendor slot
-FSTAB=$(find "$UNPACK_DIR/vendor/" -type f -name "fstab.s5e8845" | head -n1)
+FSTAB=$(find "$UNPACK_DIR/vendor/" -type f -name "fstab.qcom" | head -n1)
 # Check if found
-[ -f "$FSTAB" ] || { ui_print "[-] fstab not found in vendor_$SLOT"; exit 1; }
+[ -f "$FSTAB" ] || { ui_print "[-] fstab not found in vendor$SLOT"; exit 1; }
 
-ui_print "[+] Found fstab: /vendor/etc/fstab.s5e8845"
-ui_print "[+] Patching fstab..."
+  local md5
+  local i
+  fstab_files=`grep -lr 'fileencryption' $UNPACK_DIR/vendor/etc`
 
-$BUSYBOX sed -i \
-  -e 's#^/dev/block/by-name/metadata.*#/dev/block/by-name/metadata\t/metadata\tf2fs\tnoatime,nosuid,nodev,discard,sync,fsync_mode=strict,data_flush\twait,formattable,first_stage_mount,check#' \
-  -e 's#^/dev/block/by-name/userdata.*#/dev/block/by-name/userdata\t/data\tf2fs\tnoatime,nosuid,nodev,discard,usrquota,grpquota,fsync_mode=nobarrier,reserve_root=32768,resgid=5678\tlatemount,wait,check,quota,checkpoint=fs,reservedsize=128M,fscompress#' \
-  "$FSTAB"
+  # Exynos devices = fstab.exynos*.
+  # MediaTek devices = fstab.mt*.
+  # Snapdragon devices = fstab.qcom, fstab.emmc, fstab.default
+  #
+  for i in $fstab_files; do
+    if [ -f $i ]; then
+      ui_print "[+] Disabling file-based encryption (FBE) for /data..."
+      ui_print "[+] Found $i."
+      md5=$( md5 $i )
+      # This comments out the offending line and adds an edited one.
+      $BUSYBOX sed -i -e 's/^\([^#].*\)fileencryption=[^,]*\(.*\)$/# &\n\1encryptable\2/g' $i
+      file_changed $i $md5
+    fi
+  done
+
+  local md5
+  local i
+  fstab_files=`grep -lr 'forceencrypt' $UNPACK_DIR/vendor/etc`
+
+  #
+  # Exynos devices = fstab.exynos*.
+  # MediaTek devices = fstab.mt*.
+  # Snapdragon devices = fstab.qcom, fstab.emmc, fstab.default
+  #
+  for i in $fstab_files; do
+    if [ -f $i ]; then
+      ui_print "[+] Disabling full-disk encryption (FDE) for /data..."
+      ui_print "[+] Found $i."
+      md5=$( md5 $i )
+      # This comments out the offending line and adds an edited one.
+      $BUSYBOX sed -i -e 's/^\([^#].*\)forceencrypt=[^,]*\(.*\)$/# &\n\1encryptable\2/g' $i
+      file_changed $i $md5
+    fi
+  done
 
 ui_print "[+] fstab patched successfully."
+rm -f $UNPACK_DIR/vendor/etc/recovery-resource.dat
+rm -f $UNPACK_DIR/vendor/recovery-from-boot.p
+ui_print "[+] removing restore stock recovery from vendor."
 
 sleep 2
 
@@ -257,30 +284,30 @@ FILE_CONTEXTS="$UNPACK_DIR/config/vendor_file_contexts"
   || { ui_print "[-] mkfs.erofs failed"; exit 1; }
 
 rm "$LPUNPACK_DIR/vendor.img"
-cp -f "$WORKDIR/vendor_mod.img" "$LPUNPACK_DIR/vendor_${SLOT}.img" || {
-  ui_print "[-] Failed to copy patched vendor_${SLOT}.img"
+cp -f "$WORKDIR/vendor_mod.img" "$LPUNPACK_DIR/vendor${SLOT}.img" || {
+  ui_print "[-] Failed to copy patched vendor${SLOT}.img"
   exit 1
 }
 
 ui_print "[DEBUG] Verifying patched vendor.img…"
-$TOOLS/extract.erofs64 -i "$LPUNPACK_DIR/vendor_${SLOT}.img" -x -o /data/local/tmp/verify_vendor
+$TOOLS/extract.erofs64 -i "$LPUNPACK_DIR/vendor${SLOT}.img" -x -o /data/local/tmp/verify_vendor
 
-FSTAB_LOC=$(find /data/local/tmp/verify_vendor -type f -name "fstab.s5e8845" | head -n1)
+FSTAB_LOC=$(find /data/local/tmp/verify_vendor -type f -name "fstab.qcom" | head -n1)
 if [ -f "$FSTAB_LOC" ]; then
-  if grep -q "inlinecrypt" "$FSTAB_LOC"; then
-    ui_print "[DEBUG] ERROR: Patched fstab MISSING expected patch"
-  else
+  if grep -q "encryptable" "$FSTAB_LOC"; then
     ui_print "[DEBUG] Patched fstab present in $(basename "$FSTAB_LOC")"
+  else
+    ui_print "[DEBUG] Patched fstab not present in $(basename "$FSTAB_LOC")"
   fi
 else
-  ui_print "[DEBUG] ERROR: fstab.s5e8845 not found after unpacking vendor_${SLOT}.img"
+  ui_print "[DEBUG] ERROR: fstab.qcom not found after unpacking vendor${SLOT}.img"
 fi
 
 ui_print "  "
 
 # Metadata slots
 METADATA_SLOTS=$("$TOOLS/lpdump" "$SUPER_BLK" | awk '/Metadata slot count/ {print $NF}')
-[ -z "$METADATA_SLOTS" ] && METADATA_SLOTS=2
+[ -z "$METADATA_SLOTS" ] && METADATA_ARG="--metadata-slots ${METADATA_SLOTS}" || METADATA_ARG="--metadata-slots 2"
 
 # Calculate partition layout
 ui_print "[+] Calculating partition layout..."
@@ -297,13 +324,13 @@ ui_print "[+] Repacking things..."
 SUPER_SIZE=$("$TOOLS/busybox" blockdev --getsize64 "$SUPER_BLK")
 #SUPER_SIZE=$(awk -v size="$SUPER_SIZE" 'BEGIN { print int(size / 4096) * 4096 }')
 
-ls -l "$LPUNPACK_DIR/vendor_${SLOT}.img"
+ls -l "$LPUNPACK_DIR/vendor${SLOT}.img"
 
 # Calls LPMAKE
 ui_print "[*] Running lpmake..."
 $TOOLS/lpmake \
   --metadata-size 65536 \
-  --metadata-slots "$METADATA_SLOTS" \
+  $METADATA_ARG \
   --super-name super \
   --device super:$SUPER_SIZE \
   $LPMARGS \
@@ -333,19 +360,19 @@ ui_print "[DEBUG] Verifying if live super contains patched vendor..."
 rm -rf "$WORKDIR/postflash_live"
 mkdir -p "$WORKDIR/postflash_live"
 "$TOOLS/lpunpack" "$SUPER_BLK" /data/local/tmp/postflash_live
-"$TOOLS/extract.erofs64" -i /data/local/tmp/postflash_live/vendor_${SLOT}.img -x -o /data/local/tmp/postflash_live/vendor
+"$TOOLS/extract.erofs64" -i /data/local/tmp/postflash_live/vendor${SLOT}.img -x -o /data/local/tmp/postflash_live/vendor
 
 ui_print "  "
 
-FSTAB_PATH="/data/local/tmp/postflash_live/vendor/vendor_${SLOT}/etc/fstab.s5e8845"
+FSTAB_PATH="/data/local/tmp/postflash_live/vendor/vendor${SLOT}/etc/fstab.qcom"
 if [ -f "$FSTAB_PATH" ]; then
-  if grep -q "inlinecrypt" "$FSTAB_PATH"; then
-    ui_print "[-] [FAIL] Live fstab still has encryption flags!"
-  else
+  if grep -q "encryptable" "$FSTAB_PATH"; then
     ui_print "[*] [PASS] Live fstab patch is present."
+  else
+    ui_print "[-] [FAIL] Live fstab still has encryption flags!"
   fi
 else
-  ui_print "[-] fstab.s5e8845 not found in live vendor!"
+  ui_print "[-] fstab.qcom not found in live vendor!"
 fi
 
 # Cleanup files
@@ -353,9 +380,10 @@ rm -rf "$WORKDIR"
 rm -rf "$TMP"
 
 # Create media back
-mkdir -p /data/media
 
 ui_print "[!] Decryption patch applied successfully!"
-sleep 3
-ui_print "[!] Please FORMAT /data before rebooting."
+ui_print "[!] If first time using."
+ui_print "[!] Please FORMAT /data before rebooting system."
+sleep 5
+reboot recovery
 exit 0

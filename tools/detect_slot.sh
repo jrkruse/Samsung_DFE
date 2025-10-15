@@ -2,9 +2,12 @@
 
 # detect_slot.sh - POSIX shell version of detect_slot.py
 
-for s in a b; do
-  if [ -b "/dev/block/mapper/vendor_$s" ]; then
+for s in _a _b; do
+  if [ -b "/dev/block/mapper/vendor$s" ]; then
     echo "$s"
+    exit 0
+  else
+    echo ""
     exit 0
   fi
 done

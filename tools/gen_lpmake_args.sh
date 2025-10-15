@@ -9,7 +9,7 @@ DETECT_SLOT="$TOOLS/detect_slot.sh"
 # Detect slot (_a or _b)
 SLOT=$($DETECT_SLOT)
 [ $? -ne 0 ] && echo "[-] Failed to detect slot" && exit 1
-SUFFIX="_$SLOT"
+SUFFIX="$SLOT"
 
 # Prepare temp
 TMPFILE="/tmp/lpdump.txt"
@@ -47,31 +47,23 @@ while IFS= read -r line; do
       else
           IMG="$IMAGE_DIR/${CURRENT_PART}.img"
           # SPARSE_IMG="$IMAGE_DIR/${CURRENT_PART}.sparse.img"
-
-          if [[ "$CURRENT_PART" == *_a || "$CURRENT_PART" == *_b ]]; then
-              PART_NAME="$CURRENT_PART"
-          else
-              PART_NAME="${CURRENT_PART}${SUFFIX}"
-          fi
-
+          PART_NAME=$CURRENT_PART
           if [ ! -f "$IMG" ]; then
             echo "[*] Skipping $CURRENT_PART ($IMG not found)" >&2
             continue
           fi
-
       fi
 
         SIZE=$($BUSYBOX stat -c %s "$IMG")
         ALIGNED="$SIZE"
 
         # Generate inactive slot suffix (e.g., b if current slot is a)
-        ALT_SUFFIX="_$( [ "$SLOT" = "a" ] && echo "b" || echo "a" )"
-        ALT_PART=$(echo "$PART_NAME" | sed "s/_$SLOT\$/${ALT_SUFFIX}/")
+        ALT_SUFFIX="$( [ "$SLOT" = "_a" ] && echo "_b" || echo "_a" )"
+        ALT_PART=$(echo "$PART_NAME" | sed "s/$SLOT\$/${ALT_SUFFIX}/")
 
         PARTITION_ARGS+="  \\
   --partition ${PART_NAME}:readonly:${ALIGNED}:${GROUP_NAME} \\
   --image ${PART_NAME}=${IMG} \\
-  --partition ${ALT_PART}:readonly:0:${GROUP_NAME} \\
 "
         EXISTING=$(grep "^$GROUP_NAME " "$GROUP_SIZES_TMP" | awk '{print $2}')
         if [ -z "$EXISTING" ]; then
