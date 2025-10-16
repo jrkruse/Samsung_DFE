@@ -1,7 +1,7 @@
 id=dfe
-name=SM-A556E multidisabler
+name=samsung-erofs-multidisabler
 version=1.5
 versionCode=150
-author=Lyinceer
-description=A dfe flashable zip through recovery, made by Lyinceer || Do not kang or steal the source code!!
-device=SM-A556E
+author=Lyinceer & jrkruse
+description=A dfe flashable zip through recovery, made by Lyinceer modded by jrkruse
+
